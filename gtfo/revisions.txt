@@ -1,7 +1,4 @@
-# Empty line or line start with # will not be readed
-# ie) rundown3
-# 20001,20005,49539
-
-# RUNDOWN 3
-rundown3
-20869
+# RUNDOWN 4
+rundown4
+69d332bdf902376e92b4b5e83a2f18c6
+20870-99999
