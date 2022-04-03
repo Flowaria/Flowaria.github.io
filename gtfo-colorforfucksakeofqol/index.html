@@ -1,0 +1,20 @@
+COL: <input type="color" id="color" onchange="onValueChange();" value="#ff0000"/></br>
+HDR: <input type="number" id="hdr" step="0.01" onchange="onValueChange();" value="1.0"/></br>
+RESULT: <textarea id="result" cols="40" rows="5"></textarea>
+
+<script>
+  function onValueChange()
+  {
+    const color = document.getElementById("color").value;
+    const hdrAmount = parseFloat(document.getElementById("hdr").value);
+    const r = parseInt(color.substr(1,2), 16);
+    const g = parseInt(color.substr(3,2), 16);
+    const b = parseInt(color.substr(5,2), 16);
+    const rValue = (r / 255.0) * hdrAmount;
+    const gValue = (g / 255.0) * hdrAmount;
+    const bValue = (b / 255.0) * hdrAmount;
+
+    const result = "\"r\": " + rValue.toFixed(6) + ",\r\n\"g\": " + gValue.toFixed(6) + ",\r\n\"b\": " + bValue.toFixed(6);
+    document.getElementById("result").value = result;
+  }
+</script>
