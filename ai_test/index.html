@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>통합 실시간 AI 웹캠 분류기</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; background-color: #f8f9fa; text-align: center; margin: 0; padding: 20px; color: #333; }
+        .control-bar { background: #ffffff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); display: inline-flex; align-items: center; gap: 15px; margin-bottom: 20px; }
+        select { padding: 8px 12px; font-size: 15px; border-radius: 5px; border: 1px solid #ccc; outline: none; cursor: pointer; }
+        #status { font-weight: bold; font-size: 14px; color: #666; }
+        .container { display: flex; justify-content: center; gap: 30px; max-width: 1200px; margin: 0 auto; }
+        .box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); flex: 1; }
+        video { transform: rotateY(180deg); border-radius: 8px; background: #000; width: 100%; max-width: 520px; height: auto; }
+        #result { font-size: 24px; font-weight: bold; color: #1b5e20; margin-top: 15px; height: 35px; }
+        .chart-container { width: 100%; max-width: 520px; margin: 0 auto; }
+    </style>
+</head>
+<body>
+
+    <h1>실시간 멀티 모델 이미지 분류기</h1>
+    
+    <div class="control-bar">
+        <label for="modelSelect" style="font-weight: bold; font-size: 16px;">테스트 모델 검색:</label>
+        <select id="modelSelect" onchange="changeModel()">
+            <option value="model_resnet.onnx">ResNet-18</option>
+            <option value="model_googlenet.onnx">GoogLeNet</option>
+            <option value="model_efficientnet.onnx" selected>EfficientNet-B0</option>
+        </select>
+        <span id="status">인공지능 초기화 중...</span>
+    </div>
+
+    <div class="container">
+        <div class="box">
+            <video id="webcam" autoplay playsinline></video>
+            <div id="result">모델 대기 중...</div>
+        </div>
+        
+        <div class="box">
+            <div class="chart-container">
+                <canvas id="chart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="hiddenCanvas" width="224" height="224" style="display:none;"></canvas>
+
+<script>
+    // 본인의 실제 8개 카테고리명을 기입하세요. (순서 매칭 필수!)
+    const CLASS_NAMES = ['사과', '바나나', '오렌지', '포도', '딸기', '수박', '참외', '복숭아'];
+    let session = null;
+    let chart, video, hiddenCanvas, ctx;
+    let isModelLoading = false;
+
+    async function init() {
+        video = document.getElementById('webcam');
+        hiddenCanvas = document.getElementById('hiddenCanvas');
+        ctx = hiddenCanvas.getContext('2d');
+
+        // 1. Chart.js 가로 막대 그래프 레이아웃 구축
+        const chartCtx = document.getElementById('chart').getContext('2d');
+        chart = new Chart(chartCtx, {
+            type: 'bar',
+            data: {
+                labels: CLASS_NAMES,
+                datasets: [{ label: '확률 (%)', data: new Array(CLASS_NAMES.length).fill(0), backgroundColor: '#4A90E2', borderWidth: 1, borderRadius: 4 }]
+            },
+            options: { indexAxis: 'y', scales: { x: { min: 0, max: 100 } }, responsive: true, plugins: { legend: { display: false } } }
+        });
+
+        // 2. 기본 선택된 모델(EfficientNet) 최초 로드 진행
+        await loadModel(document.getElementById('modelSelect').value);
+        
+        // 3. 웹캠 작동 개시
+        startWebcam();
+    }
+
+    // [드랍다운 연동 수정 구조] 모델 로드 처리 비동기 함수
+    async function loadModel(modelPath) {
+        if (isModelLoading) return;
+        isModelLoading = true;
+        
+        const statusEl = document.getElementById('status');
+        statusEl.innerText = `${modelPath.split('_')[1].split('.')[0].toUpperCase()} 모델 가중치 로딩 중...`;
+        statusEl.style.color = "orange";
+        
+        if (session) { session = null; } // 메모리 초기화 방어벽
+
+        try {
+            session = await ort.InferenceSession.create(`./${modelPath}`);
+            statusEl.innerText = "상태: 실시간 분석 가동 중 (정상)";
+            statusEl.style.color = "green";
+        } catch (e) {
+            statusEl.innerText = `에러: ${modelPath} 로드 실패. 파일 유무 확인 요망.`;
+            statusEl.style.color = "red";
+            console.error(e);
+        } finally {
+            isModelLoading = false;
+        }
+    }
+
+    // 드랍다운 셀렉트 박스 스위칭 체인지 이벤트 이벤트 핸들러
+    async function changeModel() {
+        const selectedModel = document.getElementById('modelSelect').value;
+        await loadModel(selectedModel);
+    }
+
+    function startWebcam() {
+        navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+            .then(stream => { video.srcObject = stream; requestAnimationFrame(predictLoop); })
+            .catch(err => alert("카메라 디바이스를 찾을 수 없거나 브라우저 권한 보안 오류입니다."));
+    }
+
+    // 실시간 비디오 프레임 추론 파이프라인 루프
+    async function predictLoop() {
+        if (session && !isModelLoading && video.readyState === video.HAVE_CURRENT_DATA) {
+            ctx.drawImage(video, 0, 0, 224, 224);
+            const imgData = ctx.getImageData(0, 0, 224, 224).data;
+
+            // 텐서 데이터 배치 정규화 연산 분할 파싱
+            const red = [], green = [], blue = [];
+            for (let i = 0; i < imgData.length; i += 4) {
+                red.push(((imgData[i] / 255) - 0.485) / 0.229);
+                green.push(((imgData[i+1] / 255) - 0.456) / 0.224);
+                blue.push(((imgData[i+2] / 255) - 0.406) / 0.225);
+            }
+            const formattedData = new Float32Array([...red, ...green, ...blue]);
+            const inputTensor = new ort.Tensor('float32', formattedData, [1, 3, 224, 224]);
+            
+            try {
+                const outputs = await session.run({ input: inputTensor });
+                const outputData = outputs.output.data;
+
+                // Softmax 스케일링 수식 연산 구현
+                const maxLogit = Math.max(...outputData);
+                const exps = outputData.map(x => Math.exp(x - maxLogit));
+                const sumExps = exps.reduce((a, b) => a + b, 0);
+                const probabilities = exps.map(x => (x / sumExps) * 100);
+
+                const maxProb = Math.max(...probabilities);
+                const maxIdx = probabilities.indexOf(maxProb);
+
+                // 결과 노출 텍스트 UI 데이터 갱신
+                document.getElementById('result').innerText = `${CLASS_NAMES[maxIdx]} (${maxProb.toFixed(1)}%)`;
+                
+                // 가로 차트 바 색상 및 퍼센티지 수치 다이내믹 동기화
+                chart.data.datasets[0].data = probabilities;
+                chart.data.datasets[0].backgroundColor = probabilities.map(p => p === maxProb ? '#FF6B6B' : '#4A90E2');
+                chart.update('none'); // 차트 드로잉 반응성 프레임 속도 지연 캔슬 옵션
+            } catch (err) {
+                console.error("추론 루프 내부 연산 에러 발생:", err);
+            }
+        }
+        requestAnimationFrame(predictLoop);
+    }
+
+    window.onload = init;
+</script>
+</body>
+</html>
