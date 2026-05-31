@@ -2,30 +2,31 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>실시간 AI 부품 분류기 (GitHub Pages 버전)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 AI 부품 분류기 (GitHub Pages 디버깅 버전)</title>
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: 'Malgun Gothic', sans-serif; background-color: #f5f5f5; text-align: center; margin: 0; padding: 20px; }
-        .container { display: flex; justify-content: center; gap: 30px; max-width: 1200px; margin: 0 auto; margin-top: 20px; }
-        .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); flex: 1; }
-        video { transform: rotateY(180deg); border-radius: 8px; background: black; width: 100%; max-width: 500px; height: auto; } /* 거울모드 */
-        #result { font-size: 24px; font-weight: bold; color: #2e7d32; margin-top: 15px; }
-        #status { font-weight: bold; font-size: 16px; color: #ffa500; }
-        .chart-container { width: 100%; max-width: 500px; margin: 0 auto; }
+        body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; background-color: #f8f9fa; text-align: center; margin: 0; padding: 20px; color: #333; }
+        #status { font-weight: bold; font-size: 16px; color: #ffa500; margin-bottom: 20px; display: inline-block; padding: 8px 20px; border-radius: 20px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .container { display: flex; justify-content: center; gap: 30px; max-width: 1200px; margin: 0 auto; flex-wrap: wrap; }
+        .box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); flex: 1; min-width: 320px; max-width: 550px; }
+        video { transform: rotateY(180deg); border-radius: 8px; background: #000; width: 100%; height: auto; aspect-ratio: 4/3; }
+        #result { font-size: 20px; font-weight: bold; color: #1b5e20; margin-top: 15px; min-height: 35px; word-break: break-all; }
+        .chart-container { width: 100%; height: 100%; display: flex; align-items: center; }
+        canvas { width: 100% !important; height: auto !important; }
     </style>
 </head>
 <body>
 
-    <h1>실시간 부품 분류 및 확률 분포</h1>
-    <p id="status">AI 가중치 모델 로딩 중... 잠시만 기다려주세요.</p>
+    <h1>실시간 AI 부품 분류기</h1>
+    <div id="status">GitHub 서버에서 AI 모델(ONNX) 파일을 다운로드하는 중... (약 10~20초 소요)</div>
 
     <div class="container">
         <div class="box">
             <video id="webcam" autoplay playsinline></video>
-            <div id="result">웹캠 전원 켜는 중...</div>
+            <div id="result">모델 대기 중...</div>
         </div>
-        
         <div class="box">
             <div class="chart-container">
                 <canvas id="chart"></canvas>
@@ -36,7 +37,6 @@
     <canvas id="hiddenCanvas" width="224" height="224" style="display:none;"></canvas>
 
 <script>
-    // 알려주신 실제 학습 순서 8개 카테고리 정확히 반영
     const CLASS_NAMES = ['커패시터', '다이오드', '없음', '인덕터', 'LED', '핀', '저항', '트랜지스터'];
     let session = null;
     let chart, video, hiddenCanvas, ctx;
@@ -46,50 +46,61 @@
         hiddenCanvas = document.getElementById('hiddenCanvas');
         ctx = hiddenCanvas.getContext('2d');
 
-        // 1. 차트 초기화 (Chart.js)
+        // 1. 차트 초기화
         const chartCtx = document.getElementById('chart').getContext('2d');
         chart = new Chart(chartCtx, {
             type: 'bar',
             data: {
                 labels: CLASS_NAMES,
-                datasets: [{ label: '확률 (%)', data: new Array(CLASS_NAMES.length).fill(0), backgroundColor: '#4A90E2', borderWidth: 1 }]
+                datasets: [{ label: '확률 (%)', data: new Array(CLASS_NAMES.length).fill(0), backgroundColor: '#4A90E2', borderWidth: 1, borderRadius: 4 }]
             },
             options: { indexAxis: 'y', scales: { x: { min: 0, max: 100 } }, responsive: true, plugins: { legend: { display: false } } }
         });
 
-        // WASM 경로 의존성 문제를 해결하기 위해 CDN 경로 강제 지정 (안정성 극대화)
+        // WebAssembly 의존성 경로 강제 지정
         ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
 
-        // 2. 가장 안정적이고 용량이 작은 EfficientNet 모델 로드
+        // 2. AI 가중치 모델 로드
         try {
-            // 파일명이 일치하는지 꼭 확인하세요!
-            session = await ort.InferenceSession.create('./model_efficientnet.onnx'); 
-            document.getElementById('status').innerText = "상태: AI 모델 로드 완료! 실시간 작동 중";
+            // 💡 파일 이름 대소문자 불일치 방지를 위해 변수 처리 및 파일명 재확인 필수!
+            const modelFileName = './model_efficientnet.onnx'; 
+            session = await ort.InferenceSession.create(modelFileName); 
+            
+            document.getElementById('status').innerText = "상태: AI 모델 성공적으로 로드됨! 카메라를 작동합니다.";
             document.getElementById('status').style.color = "green";
             startWebcam();
         } catch (e) {
-            document.getElementById('status').innerText = "오류: model_efficientnet.onnx 파일을 읽지 못했습니다. GitHub 업로드 상태를 확인하세요.";
+            // 💡 에러 발생 시 대기 창에 에러 내용을 통째로 출력하여 원인을 바로 보여줍니다.
+            document.getElementById('status').innerText = "❌ 모델 로드 치명적 오류 발생!";
             document.getElementById('status').style.color = "red";
+            document.getElementById('result').style.color = "red";
+            document.getElementById('result').innerText = `원인: ${e.message}\n(가중치 파일 이름/용량을 확인하세요)`;
             console.error(e);
         }
     }
 
-    // 3. 웹캠 스트림 켜기
     function startWebcam() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            document.getElementById('result').style.color = "red";
+            document.getElementById('result').innerText = "보안 오류: 주소가 https:// 로 시작하는지 확인하세요.";
+            alert("보안 정책으로 웹캠을 켤 수 없습니다. 주소창 맨 앞이 https:// 인지 확인하세요.");
+            return;
+        }
+
         navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
             .then(stream => { 
                 video.srcObject = stream; 
-                document.getElementById('result').innerText = "분류 대기 중...";
+                document.getElementById('result').style.color = "#1b5e20";
+                document.getElementById('result').innerText = "⚡ 실시간 분류 가동 중...";
                 requestAnimationFrame(predictLoop); 
             })
             .catch(err => {
-                document.getElementById('result').innerText = "카메라 권한 오류";
-                alert("웹캠을 찾을 수 없거나 HTTPS 권한이 거부되었습니다.");
+                document.getElementById('result').style.color = "red";
+                document.getElementById('result').innerText = "카메라 권한 거부됨";
             });
     }
 
-    // 4. 전처리 및 실시간 예측 루프
-   async function predictLoop() {
+    async function predictLoop() {
         if (session && video.readyState === video.HAVE_CURRENT_DATA) {
             ctx.drawImage(video, 0, 0, 224, 224);
             const imgData = ctx.getImageData(0, 0, 224, 224).data;
@@ -102,22 +113,17 @@
             }
             const formattedData = new Float32Array([...red, ...green, ...blue]);
             
-            // 입력 노드 이름을 찾아 유연하게 대응
             const inputName = session.inputNames[0];
             const inputTensor = new ort.Tensor('float32', formattedData, [1, 3, 224, 224]);
             
             try {
-                // 💡 [핵심 변경] inputName을 동적으로 할당합니다.
                 const feeds = {};
                 feeds[inputName] = inputTensor;
                 
                 const outputs = await session.run(feeds);
-                
-                // 💡 [핵심 변경] output_names 셋팅과 상관없이 모델의 첫 번째 출력 노드를 강제로 가져옵니다.
                 const outputName = session.outputNames[0];
                 const outputData = outputs[outputName].data;
 
-                // Softmax 연산
                 const maxLogit = Math.max(...outputData);
                 const exps = outputData.map(x => Math.exp(x - maxLogit));
                 const sumExps = exps.reduce((a, b) => a + b, 0);
@@ -132,9 +138,8 @@
                 chart.data.datasets[0].backgroundColor = probabilities.map(p => p === maxProb ? '#FF6B6B' : '#4A90E2');
                 chart.update('none'); 
             } catch (err) {
-                // 그래프가 멈췄을 때 어떤 에러인지 화면 결과창에 실시간으로 뿌려줍니다 (디버깅용)
-                document.getElementById('result').innerText = `연산 에러: ${err.message}`;
-                console.error("추론 중 오류:", err);
+                document.getElementById('result').style.color = "red";
+                document.getElementById('result').innerText = `추론 연산 에러: ${err.message}`;
             }
         }
         requestAnimationFrame(predictLoop);
